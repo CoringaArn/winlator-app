@@ -112,7 +112,7 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
                 });
             }
         } catch (Exception e) {
-            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Erro start: " + e.getMessage(), Toast.LENGTH_LONG).show();
             finish();
         }
     }
@@ -166,7 +166,7 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
             Toast.makeText(this, "Erro JSON: " + e.getMessage(), Toast.LENGTH_LONG).show();
             finish();
         } catch (Exception e) {
-            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Erro setup: " + e.getMessage(), Toast.LENGTH_LONG).show();
             finish();
         }
     }
@@ -174,24 +174,27 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     private void launchWithContainer(Container container, ContainerManager manager) {
         try {
             manager.activateContainer(container);
+        } catch (Exception e) {
+            Toast.makeText(this, "Erro activate: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
 
-            File gameExe = findGameExe(container);
-            if (gameExe == null) {
-                Toast.makeText(this,
-                    "Jogo nao encontrado.\n\nColoque em:\n/sdcard/Download/Freedom/Game Files/Freedom.exe",
-                    Toast.LENGTH_LONG).show();
-                finish();
-                return;
-            }
+        File gameExe = findGameExe(container);
+        if (gameExe == null) {
+            Toast.makeText(this,
+                "Jogo nao encontrado.\n\nProcurei em:\n/sdcard/Download/Freedom/Game Files/\n\nContainer ID: " + container.id,
+                Toast.LENGTH_LONG).show();
+            return;
+        }
 
+        try {
             Intent intent = new Intent(this, XServerDisplayActivity.class);
             intent.putExtra("container_id", container.id);
             intent.putExtra("shortcut_path", gameExe.getAbsolutePath());
             startActivity(intent);
             finish();
         } catch (Exception e) {
-            Toast.makeText(this, "Erro ao abrir jogo: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            finish();
+            Toast.makeText(this, "Erro abrir jogo: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
