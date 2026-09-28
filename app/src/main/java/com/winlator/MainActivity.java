@@ -29,7 +29,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_CONTAINER_ID = "game_container_id";
     private static final String PREF_SETUP_DONE = "game_setup_done";
 
-    // CONFIGURACAO DO JOGO
     private static final String GAME_EXE_NAME = "Freedom.exe";
     private static final String GAME_FOLDER = "Freedom/Game Files";
     private static final String GAME_SCREEN_SIZE = "1280x800";
@@ -88,34 +87,61 @@ public class MainActivity extends AppCompatActivity {
         int savedContainerId = prefs.getInt(PREF_CONTAINER_ID, -1);
         boolean setupDone = prefs.getBoolean(PREF_SETUP_DONE, false);
 
-        ContainerManager manager = new ContainerManager(this);
-        Container container = null;
+        final ContainerManager manager = new ContainerManager(this);
 
         if (savedContainerId > 0 && setupDone) {
-            container = manager.getContainerById(savedContainerId);
+            Container container = manager.getContainerById(savedContainerId);
+            if (container != null) {
+                launchWithContainer(container, manager);
+                return;
+            }
         }
 
-        if (container == null) {
-            if (manager.getContainers().isEmpty()) {
-                container = createGameContainer(manager);
-            } else {
-                container = manager.getContainers().get(0);
-            }
+        if (!manager.getContainers().isEmpty()) {
+            Container container = manager.getContainers().get(0);
+            prefs.edit()
+                .putInt(PREF_CONTAINER_ID, container.id)
+                .putBoolean(PREF_SETUP_DONE, true)
+                .apply();
+            launchWithContainer(container, manager);
+            return;
+        }
 
-            if (container != null) {
+        try {
+            JSONObject data = new JSONObject();
+            data.put("name", "Freedom Fighters");
+            data.put("screenSize", GAME_SCREEN_SIZE);
+            data.put("graphicsDriver", "vortek,gladio");
+            data.put("dxwrapper", "wine");
+            data.put("audioDriver", "alsa");
+            data.put("wincomponents", "direct3d=1,directsound=1,directmusic=1,directshow=0,directplay=0,vcrun2005=0,vcrun2010=1,wmdecoder=1");
+            data.put("box64Preset", "COMPATIBILITY");
+            data.put("drives", "D:" + GAME_DRIVE_PATH + ",E:/data/data/com.winlator/storage");
+            data.put("envVars", "ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=1");
+            data.put("windowsVersion", "win7");
+
+            manager.createContainerAsync(data, container -> {
+                if (container == null) {
+                    Toast.makeText(this, "Erro ao criar container", Toast.LENGTH_LONG).show();
+                    finish();
+                    return;
+                }
+
                 prefs.edit()
                     .putInt(PREF_CONTAINER_ID, container.id)
                     .putBoolean(PREF_SETUP_DONE, true)
                     .apply();
-            }
-        }
 
-        if (container == null) {
-            Toast.makeText(this, "Erro ao criar container", Toast.LENGTH_LONG).show();
+                launchWithContainer(container, manager);
+            });
+
+        } catch (JSONException e) {
+            Toast.makeText(this, "Erro ao preparar container", Toast.LENGTH_LONG).show();
             finish();
-            return;
         }
+    }
 
+    private void launchWithContainer(Container container, ContainerManager manager) {
         manager.activateContainer(container);
 
         File gameExe = findGameExe(container);
@@ -134,26 +160,6 @@ public class MainActivity extends AppCompatActivity {
         finish();
     }
 
-    private Container createGameContainer(ContainerManager manager) {
-        try {
-            JSONObject data = new JSONObject();
-            data.put("name", "Freedom Fighters");
-            data.put("screenSize", GAME_SCREEN_SIZE);
-            data.put("graphicsDriver", "vortek,gladio");
-            data.put("dxwrapper", "wine");
-            data.put("audioDriver", "alsa");
-            data.put("wincomponents", "direct3d=1,directsound=1,directmusic=1,directshow=0,directplay=0,vcrun2005=0,vcrun2010=1,wmdecoder=1");
-            data.put("box64Preset", "COMPATIBILITY");
-            data.put("drives", "D:" + GAME_DRIVE_PATH + ",E:/data/data/com.winlator/storage");
-            data.put("envVars", "ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=1");
-            data.put("windowsVersion", "win7");
-            return manager.createContainer(data);
-        } catch (JSONException e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
-
     private File findGameExe(Container container) {
         File[] paths = {
             new File("/sdcard/Download/" + GAME_FOLDER + "/" + GAME_EXE_NAME),
@@ -167,8 +173,7 @@ public class MainActivity extends AppCompatActivity {
             if (f.exists()) return f;
         }
 
-        File exe = findExeRecursive(new File("/sdcard/Download"), "freedom.exe", 0);
-        return exe;
+        return findExeRecursive(new File("/sdcard/Download"), "freedom.exe", 0);
     }
 
     private File findExeRecursive(File dir, String exeName, int depth) {
