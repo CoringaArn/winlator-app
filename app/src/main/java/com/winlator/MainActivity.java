@@ -1,219 +1,190 @@
 package com.winlator;
 
 import android.Manifest;
-import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.content.res.Configuration;
-import android.net.Uri;
 import android.os.Bundle;
-import android.view.MenuItem;
+import android.view.View;
+import android.widget.Toast;
 
-import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.view.GravityCompat;
-import androidx.drawerlayout.widget.DrawerLayout;
-import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentManager;
 import androidx.preference.PreferenceManager;
 
-import com.google.android.material.navigation.NavigationView;
-import com.winlator.contentdialog.AboutDialog;
+import com.winlator.container.Container;
+import com.winlator.container.ContainerManager;
 import com.winlator.core.AppUtils;
-import com.winlator.core.Callback;
-import com.winlator.core.LocaleHelper;
-import com.winlator.core.PreloaderDialog;
 import com.winlator.xenvironment.RootFSInstaller;
 
-public class MainActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener {
-    public static final boolean DEBUG_MODE = false; // FIXME change to false
-    public static final @IntRange(from = 1, to = 19) byte CONTAINER_PATTERN_COMPRESSION_LEVEL = 9;
-    public static final byte PERMISSION_WRITE_EXTERNAL_STORAGE_REQUEST_CODE = 1;
-    public static final byte OPEN_FILE_REQUEST_CODE = 2;
-    public static final byte EDIT_INPUT_CONTROLS_REQUEST_CODE = 3;
-    public static final byte OPEN_DIRECTORY_REQUEST_CODE = 4;
-    private DrawerLayout drawerLayout;
-    public final PreloaderDialog preloaderDialog = new PreloaderDialog(this);
-    private boolean editInputControls = false;
-    private int selectedProfileId;
-    private Callback<Uri> openFileCallback;
-    private SharedPreferences preferences;
-    private Fragment currentFragment;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.File;
+
+public class MainActivity extends AppCompatActivity {
+    private static final byte PERMISSION_REQUEST_CODE = 1;
+    private static final String PREF_CONTAINER_ID = "game_container_id";
+    private static final String PREF_SETUP_DONE = "game_setup_done";
+
+    // CONFIGURACAO DO JOGO
+    private static final String GAME_EXE_NAME = "Freedom.exe";
+    private static final String GAME_FOLDER = "Freedom/Game Files";
+    private static final String GAME_SCREEN_SIZE = "1280x800";
+    private static final String GAME_DRIVE_PATH = "/sdcard/Download";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        AppUtils.setActivityTheme(this);
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.main_activity);
+        AppUtils.setActivityTheme(this);
+        setContentView(new View(this));
 
-        drawerLayout = findViewById(R.id.DrawerLayout);
-        NavigationView navigationView = findViewById(R.id.NavigationView);
-        navigationView.setNavigationItemSelectedListener(this);
-
-        setSupportActionBar(findViewById(R.id.Toolbar));
-        ActionBar actionBar = getSupportActionBar();
-        actionBar.setDisplayHomeAsUpEnabled(true);
-
-        preferences = PreferenceManager.getDefaultSharedPreferences(this);
-
-        Intent intent = getIntent();
-        editInputControls = intent.getBooleanExtra("edit_input_controls", false);
-        if (editInputControls) {
-            selectedProfileId = intent.getIntExtra("selected_profile_id", 0);
-            actionBar.setHomeAsUpIndicator(R.drawable.icon_action_bar_back);
-            onNavigationItemSelected(navigationView.getMenu().findItem(R.id.menu_item_input_controls));
-            navigationView.setCheckedItem(R.id.menu_item_input_controls);
+        if (!hasStoragePermission()) {
+            ActivityCompat.requestPermissions(this,
+                new String[]{
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                },
+                PERMISSION_REQUEST_CODE);
+            return;
         }
-        else {
-            boolean showShortcutsFirst = preferences.getBoolean("show_shortcuts_first", false);
-            int selectedMenuItemId = intent.getIntExtra("selected_menu_item_id", 0);
-            int menuItemId = selectedMenuItemId > 0 ? selectedMenuItemId : (showShortcutsFirst ? R.id.menu_item_shortcuts : R.id.menu_item_containers);
 
-            actionBar.setHomeAsUpIndicator(R.drawable.icon_action_bar_menu);
-            onNavigationItemSelected(navigationView.getMenu().findItem(menuItemId));
-            navigationView.setCheckedItem(menuItemId);
-            if (!requestAppPermissions()) RootFSInstaller.installIfNeeded(this);
-
-            int containerId = intent.getIntExtra("container_id", 0);
-            String startPath = intent.getStringExtra("start_path");
-            if (containerId > 0 && startPath != null) {
-                showFragment(new ContainerFileManagerFragment(containerId, startPath));
-            }
-        }
+        start();
     }
 
-    @Override
-    protected void attachBaseContext(Context newBase) {
-        super.attachBaseContext(LocaleHelper.setSystemLocale(newBase));
+    private boolean hasStoragePermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            == PackageManager.PERMISSION_GRANTED;
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_WRITE_EXTERNAL_STORAGE_REQUEST_CODE) {
+        if (requestCode == PERMISSION_REQUEST_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                RootFSInstaller.installIfNeeded(this);
-            }
-            else finish();
-        }
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == MainActivity.OPEN_FILE_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
-            if (openFileCallback != null) {
-                openFileCallback.call(data.getData());
-                openFileCallback = null;
-            }
-        }
-    }
-
-    @Override
-    public void onConfigurationChanged(@NonNull Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-        if ((newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE ||
-            newConfig.orientation == Configuration.ORIENTATION_PORTRAIT) && currentFragment instanceof BaseFileManagerFragment) {
-            ((BaseFileManagerFragment)currentFragment).onOrientationChanged();
-        }
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (currentFragment != null && currentFragment.isVisible()) {
-            if (currentFragment instanceof BaseFileManagerFragment) {
-                BaseFileManagerFragment fileManagerFragment = (BaseFileManagerFragment)currentFragment;
-                if (fileManagerFragment.onBackPressed()) return;
-            }
-            else if (currentFragment instanceof ContainersFragment) {
+                start();
+            } else {
+                Toast.makeText(this, "Permissao necessaria", Toast.LENGTH_LONG).show();
                 finish();
             }
         }
-
-        showFragment(new ContainersFragment());
     }
 
-    public void setOpenFileCallback(Callback<Uri> openFileCallback) {
-        this.openFileCallback = openFileCallback;
-    }
-
-    private boolean requestAppPermissions() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) return false;
-
-        String[] permissions = new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE};
-        ActivityCompat.requestPermissions(this, permissions, PERMISSION_WRITE_EXTERNAL_STORAGE_REQUEST_CODE);
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem menuItem) {
-        int itemId = menuItem.getItemId();
-        if (itemId == R.id.menu_item_add ||
-            itemId == R.id.menu_item_home ||
-            itemId == R.id.menu_item_view_style ||
-            itemId == R.id.menu_item_new_folder) {
-            return super.onOptionsItemSelected(menuItem);
-        }
-        else {
-            if (editInputControls) {
-                setResult(RESULT_OK);
+    private void start() {
+        RootFSInstaller.installWithCallback(this, success -> {
+            if (success) {
+                setupAndLaunch();
+            } else {
+                Toast.makeText(this, "Falha ao instalar arquivos", Toast.LENGTH_LONG).show();
                 finish();
             }
-            else {
-                if (currentFragment instanceof BaseFileManagerFragment) {
-                    BaseFileManagerFragment fileManagerFragment = (BaseFileManagerFragment)currentFragment;
-                    if (fileManagerFragment.onOptionsMenuClicked()) return true;
-                }
-                drawerLayout.openDrawer(GravityCompat.START);
+        });
+    }
+
+    private void setupAndLaunch() {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        int savedContainerId = prefs.getInt(PREF_CONTAINER_ID, -1);
+        boolean setupDone = prefs.getBoolean(PREF_SETUP_DONE, false);
+
+        ContainerManager manager = new ContainerManager(this);
+        Container container = null;
+
+        if (savedContainerId > 0 && setupDone) {
+            container = manager.getContainerById(savedContainerId);
+        }
+
+        if (container == null) {
+            if (manager.getContainers().isEmpty()) {
+                container = createGameContainer(manager);
+            } else {
+                container = manager.getContainers().get(0);
             }
-            return true;
+
+            if (container != null) {
+                prefs.edit()
+                    .putInt(PREF_CONTAINER_ID, container.id)
+                    .putBoolean(PREF_SETUP_DONE, true)
+                    .apply();
+            }
+        }
+
+        if (container == null) {
+            Toast.makeText(this, "Erro ao criar container", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        manager.activateContainer(container);
+
+        File gameExe = findGameExe(container);
+        if (gameExe == null) {
+            Toast.makeText(this,
+                "Jogo nao encontrado.\n\nColoque em:\n/sdcard/Download/Freedom/Game Files/Freedom.exe",
+                Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        Intent intent = new Intent(this, XServerDisplayActivity.class);
+        intent.putExtra("container_id", container.id);
+        intent.putExtra("shortcut_path", gameExe.getAbsolutePath());
+        startActivity(intent);
+        finish();
+    }
+
+    private Container createGameContainer(ContainerManager manager) {
+        try {
+            JSONObject data = new JSONObject();
+            data.put("name", "Freedom Fighters");
+            data.put("screenSize", GAME_SCREEN_SIZE);
+            data.put("graphicsDriver", "vortek,gladio");
+            data.put("dxwrapper", "wine");
+            data.put("audioDriver", "alsa");
+            data.put("wincomponents", "direct3d=1,directsound=1,directmusic=1,directshow=0,directplay=0,vcrun2005=0,vcrun2010=1,wmdecoder=1");
+            data.put("box64Preset", "COMPATIBILITY");
+            data.put("drives", "D:" + GAME_DRIVE_PATH + ",E:/data/data/com.winlator/storage");
+            data.put("envVars", "ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=1");
+            data.put("windowsVersion", "win7");
+            return manager.createContainer(data);
+        } catch (JSONException e) {
+            e.printStackTrace();
+            return null;
         }
     }
 
-    @Override
-    public boolean onNavigationItemSelected(@NonNull MenuItem item) {
-        FragmentManager fragmentManager = getSupportFragmentManager();
-        if (fragmentManager.getBackStackEntryCount() > 0) {
-            fragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
+    private File findGameExe(Container container) {
+        File[] paths = {
+            new File("/sdcard/Download/" + GAME_FOLDER + "/" + GAME_EXE_NAME),
+            new File("/storage/emulated/0/Download/" + GAME_FOLDER + "/" + GAME_EXE_NAME),
+            new File("/sdcard/Download/Freedom/Game Files/Freedom.exe"),
+            new File("/sdcard/Android/data/com.winlator/Game Files/Freedom.exe"),
+            new File(container.getRootDir(), ".wine/drive_c/Freedom.exe"),
+        };
+
+        for (File f : paths) {
+            if (f.exists()) return f;
         }
 
-        switch (item.getItemId()) {
-            case R.id.menu_item_shortcuts:
-                preferences.edit().putBoolean("show_shortcuts_first", true).apply();
-                showFragment(new ShortcutsFragment());
-                break;
-            case R.id.menu_item_containers:
-                preferences.edit().putBoolean("show_shortcuts_first", false).apply();
-                showFragment(new ContainersFragment());
-                break;
-            case R.id.menu_item_input_controls:
-                showFragment(new InputControlsFragment(selectedProfileId));
-                break;
-            case R.id.menu_item_settings:
-                showFragment(new SettingsFragment());
-                break;
-            case R.id.menu_item_about:
-                (new AboutDialog(this)).show();
-                break;
-        }
-        return true;
+        File exe = findExeRecursive(new File("/sdcard/Download"), "freedom.exe", 0);
+        return exe;
     }
 
-    public void showFragment(Fragment fragment) {
-        FragmentManager fragmentManager = getSupportFragmentManager();
-        fragmentManager.beginTransaction()
-            .replace(R.id.FLFragmentContainer, fragment)
-            .commit();
+    private File findExeRecursive(File dir, String exeName, int depth) {
+        if (depth > 4 || dir == null || !dir.isDirectory()) return null;
+        File[] files = dir.listFiles();
+        if (files == null) return null;
 
-        drawerLayout.closeDrawer(GravityCompat.START);
-        currentFragment = fragment;
+        for (File f : files) {
+            if (f.isFile() && f.getName().equalsIgnoreCase(exeName)) return f;
+        }
+        for (File f : files) {
+            if (f.isDirectory()) {
+                File result = findExeRecursive(f, exeName, depth + 1);
+                if (result != null) return result;
+            }
+        }
+        return null;
     }
 }
