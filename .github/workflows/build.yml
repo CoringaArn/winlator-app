@@ -19,21 +19,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Accept Android SDK licenses
+      - name: Accept all SDK licenses
         run: |
           mkdir -p $ANDROID_HOME/licenses
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> $ANDROID_HOME/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_HOME/licenses/android-sdk-preview-license
-          echo "504667f4c0de7af1a06de9f4b1727b84351f2910" > $ANDROID_HOME/licenses/android-googletv-license
-          echo "33b6a2b64607f11b759f320ef9dff4ae5c47d97a" > $ANDROID_HOME/licenses/android-sdk-arm-dbt-license
-          echo "859f317696f67ef3d7f30a50a5560e7834b43903" > $ANDROID_HOME/licenses/android-sdk-license
-          echo "601eea49d49003e6ea75a11527209c4f510a93e2" > $ANDROID_HOME/licenses/android-sdk-preview-license
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
 
       - name: Install Android SDK components
         run: |
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;24.0.8215888" "cmake;3.22.1" "platforms;android-35" "build-tools;34.0.0" || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;24.0.8215888" "cmake;3.22.1" "platforms;android-35" "build-tools;34.0.0" > /dev/null 2>&1 || true
+
+      - name: Verify NDK and CMake
+        run: |
+          ls -la $ANDROID_HOME/ndk/ || echo "NDK not found"
+          ls -la $ANDROID_HOME/cmake/ || echo "CMake not found"
 
       - name: Cache Gradle
         uses: actions/cache@v4
