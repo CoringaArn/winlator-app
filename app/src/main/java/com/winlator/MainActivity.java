@@ -19,10 +19,6 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.view.GravityCompat;
-import androidx.drawerlayout.widget.DrawerLayout;
-import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentManager;
 import androidx.preference.PreferenceManager;
 
 import com.google.android.material.navigation.NavigationView;
@@ -32,7 +28,11 @@ import com.winlator.core.AppUtils;
 import com.winlator.core.Callback;
 import com.winlator.core.LocaleHelper;
 import com.winlator.core.PreloaderDialog;
+import com.winlator.xenvironment.RootFS;
 import com.winlator.xenvironment.RootFSInstaller;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
 
@@ -44,16 +44,17 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     public static final byte EDIT_INPUT_CONTROLS_REQUEST_CODE = 3;
     public static final byte OPEN_DIRECTORY_REQUEST_CODE = 4;
 
+    private static final String PREF_CONTAINER_ID = "game_container_id";
     private static final String GAME_EXE_NAME = "Freedom.exe";
     private static final String GAME_FOLDER = "Freedom/Game Files";
+    private static final String GAME_SCREEN_SIZE = "1280x800";
+    private static final String GAME_DRIVE_PATH = "/sdcard/Download";
 
-    private DrawerLayout drawerLayout;
     public final PreloaderDialog preloaderDialog = new PreloaderDialog(this);
     private boolean editInputControls = false;
     private int selectedProfileId;
     private Callback<Uri> openFileCallback;
     private SharedPreferences preferences;
-    private Fragment currentFragment;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,14 +97,11 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     private void start() {
-        // Verifica se o rootfs já está instalado
         try {
-            com.winlator.xenvironment.RootFS rootFS = com.winlator.xenvironment.RootFS.find(this);
+            RootFS rootFS = RootFS.find(this);
             if (rootFS.isValid() && rootFS.getVersion() >= RootFSInstaller.LATEST_VERSION) {
-                // Já instalado → vai direto pro jogo
                 setupAndLaunch();
             } else {
-                // Precisa instalar
                 RootFSInstaller.installWithCallback(this, success -> {
                     if (success) {
                         setupAndLaunch();
@@ -121,17 +119,60 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
 
     private void setupAndLaunch() {
         try {
-            ContainerManager manager = new ContainerManager(this);
+            final ContainerManager manager = new ContainerManager(this);
 
-            if (manager.getContainers().isEmpty()) {
-                Toast.makeText(this,
-                    "Nenhum container encontrado.\n\nAbra o Winlator original e crie um container primeiro.",
-                    Toast.LENGTH_LONG).show();
-                finish();
+            int savedContainerId = preferences.getInt(PREF_CONTAINER_ID, -1);
+            if (savedContainerId > 0) {
+                Container saved = manager.getContainerById(savedContainerId);
+                if (saved != null) {
+                    launchWithContainer(saved, manager);
+                    return;
+                }
+            }
+
+            if (!manager.getContainers().isEmpty()) {
+                Container container = manager.getContainers().get(0);
+                preferences.edit().putInt(PREF_CONTAINER_ID, container.id).apply();
+                launchWithContainer(container, manager);
                 return;
             }
 
-            Container container = manager.getContainers().get(0);
+            Toast.makeText(this, "Criando container...", Toast.LENGTH_SHORT).show();
+
+            JSONObject data = new JSONObject();
+            data.put("name", "Freedom Fighters");
+            data.put("screenSize", GAME_SCREEN_SIZE);
+            data.put("graphicsDriver", "vortek,gladio");
+            data.put("dxwrapper", "wine");
+            data.put("audioDriver", "alsa");
+            data.put("wincomponents", "direct3d=1,directsound=1,directmusic=1,directshow=0,directplay=0,vcrun2005=0,vcrun2010=1,wmdecoder=1");
+            data.put("box64Preset", "COMPATIBILITY");
+            data.put("drives", "D:" + GAME_DRIVE_PATH + ",E:/data/data/com.winlator/storage");
+            data.put("envVars", "ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=1");
+            data.put("windowsVersion", "win7");
+
+            manager.createContainerAsync(data, container -> {
+                if (container == null) {
+                    Toast.makeText(this, "Erro ao criar container", Toast.LENGTH_LONG).show();
+                    finish();
+                    return;
+                }
+
+                preferences.edit().putInt(PREF_CONTAINER_ID, container.id).apply();
+                launchWithContainer(container, manager);
+            });
+
+        } catch (JSONException e) {
+            Toast.makeText(this, "Erro JSON: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            finish();
+        } catch (Exception e) {
+            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            finish();
+        }
+    }
+
+    private void launchWithContainer(Container container, ContainerManager manager) {
+        try {
             manager.activateContainer(container);
 
             File gameExe = findGameExe(container);
@@ -148,9 +189,8 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
             intent.putExtra("shortcut_path", gameExe.getAbsolutePath());
             startActivity(intent);
             finish();
-
         } catch (Exception e) {
-            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Erro ao abrir jogo: " + e.getMessage(), Toast.LENGTH_LONG).show();
             finish();
         }
     }
@@ -206,21 +246,6 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     @Override
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if ((newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE ||
-            newConfig.orientation == Configuration.ORIENTATION_PORTRAIT) && currentFragment instanceof BaseFileManagerFragment) {
-            ((BaseFileManagerFragment)currentFragment).onOrientationChanged();
-        }
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (currentFragment != null && currentFragment.isVisible()) {
-            if (currentFragment instanceof BaseFileManagerFragment) {
-                BaseFileManagerFragment fileManagerFragment = (BaseFileManagerFragment)currentFragment;
-                if (fileManagerFragment.onBackPressed()) return;
-            }
-        }
-        super.onBackPressed();
     }
 
     public void setOpenFileCallback(Callback<Uri> openFileCallback) {
@@ -228,24 +253,10 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     @Override
-    public boolean onOptionsItemSelected(MenuItem menuItem) {
-        if (editInputControls) {
-            setResult(RESULT_OK);
-            finish();
-        }
-        return super.onOptionsItemSelected(menuItem);
-    }
-
-    @Override
     public boolean onNavigationItemSelected(@NonNull MenuItem item) {
         return true;
     }
 
-    public void showFragment(Fragment fragment) {
-        FragmentManager fragmentManager = getSupportFragmentManager();
-        fragmentManager.beginTransaction()
-            .replace(R.id.FLFragmentContainer, fragment)
-            .commit();
-        currentFragment = fragment;
+    public void showFragment(androidx.fragment.app.Fragment fragment) {
     }
-            }
+}
