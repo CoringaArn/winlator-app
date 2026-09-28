@@ -26,9 +26,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
 public abstract class RootFSInstaller {
-    public static final byte LATEST_VERSION = 23; // TODO increment it on rootfs update
-    public static final byte UPDATE_WINEPREFIX_VERSION = 16; // set it if main wine version change
+    public static final byte LATEST_VERSION = 23;
+    public static final byte UPDATE_WINEPREFIX_VERSION = 16;
     public static final String FILENAME = "rootfs.tzst";
+
+    public interface InstallCallback {
+        void onComplete(boolean success);
+    }
 
     private static void resetContainerRFSVersions(Context context) {
         ContainerManager manager = new ContainerManager(context);
@@ -74,6 +78,45 @@ public abstract class RootFSInstaller {
             else AppUtils.showToast(activity, R.string.unable_to_install_system_files);
 
             dialog.closeOnUiThread();
+        });
+    }
+
+    public static void installWithCallback(final MainActivity activity, final InstallCallback callback) {
+        RootFS rootFS = RootFS.find(activity);
+        if (rootFS.isValid() && rootFS.getVersion() >= LATEST_VERSION) {
+            callback.onComplete(true);
+            return;
+        }
+
+        AppUtils.keepScreenOn(activity);
+        final File rootDir = rootFS.getRootDir();
+
+        SettingsFragment.resetPreferenceVersions(activity);
+
+        final DownloadProgressDialog dialog = new DownloadProgressDialog(activity);
+        dialog.show(R.string.installing_system_files);
+        Executors.newSingleThreadExecutor().execute(() -> {
+            clearRootDir(rootDir);
+            final long contentLength = TarCompressorUtils.getContentLength(TarCompressorUtils.Type.ZSTD, activity, FILENAME, rootDir);
+            AtomicLong totalSizeRef = new AtomicLong();
+
+            boolean success = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, activity, FILENAME, rootDir, (file, size) -> {
+                if (size > 0) {
+                    long totalSize = totalSizeRef.addAndGet(size);
+                    final int progress = (int)(((float)totalSize / contentLength) * 100);
+                    activity.runOnUiThread(() -> dialog.setProgress(progress));
+                }
+                return file;
+            });
+
+            if (success) {
+                rootFS.createRFSVersionFile(LATEST_VERSION);
+                resetContainerRFSVersions(activity);
+            }
+
+            dialog.closeOnUiThread();
+            final boolean finalSuccess = success;
+            activity.runOnUiThread(() -> callback.onComplete(finalSuccess));
         });
     }
 
@@ -184,4 +227,4 @@ public abstract class RootFSInstaller {
             catch (JSONException e) {}
         });
     }
-}
+    }
