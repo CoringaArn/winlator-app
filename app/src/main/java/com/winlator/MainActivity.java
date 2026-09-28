@@ -34,9 +34,6 @@ import com.winlator.core.LocaleHelper;
 import com.winlator.core.PreloaderDialog;
 import com.winlator.xenvironment.RootFSInstaller;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 
 public class MainActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener {
@@ -47,13 +44,8 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     public static final byte EDIT_INPUT_CONTROLS_REQUEST_CODE = 3;
     public static final byte OPEN_DIRECTORY_REQUEST_CODE = 4;
 
-    private static final String PREF_CONTAINER_ID = "game_container_id";
-    private static final String PREF_SETUP_DONE = "game_setup_done";
-
     private static final String GAME_EXE_NAME = "Freedom.exe";
     private static final String GAME_FOLDER = "Freedom/Game Files";
-    private static final String GAME_SCREEN_SIZE = "1280x800";
-    private static final String GAME_DRIVE_PATH = "/sdcard/Download";
 
     private DrawerLayout drawerLayout;
     public final PreloaderDialog preloaderDialog = new PreloaderDialog(this);
@@ -104,91 +96,63 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     private void start() {
-        RootFSInstaller.installWithCallback(this, success -> {
-            if (success) {
+        // Verifica se o rootfs já está instalado
+        try {
+            com.winlator.xenvironment.RootFS rootFS = com.winlator.xenvironment.RootFS.find(this);
+            if (rootFS.isValid() && rootFS.getVersion() >= RootFSInstaller.LATEST_VERSION) {
+                // Já instalado → vai direto pro jogo
                 setupAndLaunch();
             } else {
-                Toast.makeText(this, "Falha ao instalar arquivos", Toast.LENGTH_LONG).show();
-                finish();
+                // Precisa instalar
+                RootFSInstaller.installWithCallback(this, success -> {
+                    if (success) {
+                        setupAndLaunch();
+                    } else {
+                        Toast.makeText(this, "Falha ao instalar arquivos", Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                });
             }
-        });
+        } catch (Exception e) {
+            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            finish();
+        }
     }
 
     private void setupAndLaunch() {
-        int savedContainerId = preferences.getInt(PREF_CONTAINER_ID, -1);
-        boolean setupDone = preferences.getBoolean(PREF_SETUP_DONE, false);
+        try {
+            ContainerManager manager = new ContainerManager(this);
 
-        final ContainerManager manager = new ContainerManager(this);
-
-        if (savedContainerId > 0 && setupDone) {
-            Container container = manager.getContainerById(savedContainerId);
-            if (container != null) {
-                launchWithContainer(container, manager);
+            if (manager.getContainers().isEmpty()) {
+                Toast.makeText(this,
+                    "Nenhum container encontrado.\n\nAbra o Winlator original e crie um container primeiro.",
+                    Toast.LENGTH_LONG).show();
+                finish();
                 return;
             }
-        }
 
-        if (!manager.getContainers().isEmpty()) {
             Container container = manager.getContainers().get(0);
-            preferences.edit()
-                .putInt(PREF_CONTAINER_ID, container.id)
-                .putBoolean(PREF_SETUP_DONE, true)
-                .apply();
-            launchWithContainer(container, manager);
-            return;
-        }
+            manager.activateContainer(container);
 
-        try {
-            JSONObject data = new JSONObject();
-            data.put("name", "Freedom Fighters");
-            data.put("screenSize", GAME_SCREEN_SIZE);
-            data.put("graphicsDriver", "vortek,gladio");
-            data.put("dxwrapper", "wine");
-            data.put("audioDriver", "alsa");
-            data.put("wincomponents", "direct3d=1,directsound=1,directmusic=1,directshow=0,directplay=0,vcrun2005=0,vcrun2010=1,wmdecoder=1");
-            data.put("box64Preset", "COMPATIBILITY");
-            data.put("drives", "D:" + GAME_DRIVE_PATH + ",E:/data/data/com.winlator/storage");
-            data.put("envVars", "ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=1");
-            data.put("windowsVersion", "win7");
+            File gameExe = findGameExe(container);
+            if (gameExe == null) {
+                Toast.makeText(this,
+                    "Jogo nao encontrado.\n\nColoque em:\n/sdcard/Download/Freedom/Game Files/Freedom.exe",
+                    Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            }
 
-            manager.createContainerAsync(data, container -> {
-                if (container == null) {
-                    Toast.makeText(this, "Erro ao criar container", Toast.LENGTH_LONG).show();
-                    finish();
-                    return;
-                }
+            Intent intent = new Intent(this, XServerDisplayActivity.class);
+            intent.putExtra("container_id", container.id);
+            intent.putExtra("shortcut_path", gameExe.getAbsolutePath());
+            startActivity(intent);
+            finish();
 
-                preferences.edit()
-                    .putInt(PREF_CONTAINER_ID, container.id)
-                    .putBoolean(PREF_SETUP_DONE, true)
-                    .apply();
-
-                launchWithContainer(container, manager);
-            });
-
-        } catch (JSONException e) {
-            Toast.makeText(this, "Erro ao preparar container", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
             finish();
         }
-    }
-
-    private void launchWithContainer(Container container, ContainerManager manager) {
-        manager.activateContainer(container);
-
-        File gameExe = findGameExe(container);
-        if (gameExe == null) {
-            Toast.makeText(this,
-                "Jogo nao encontrado.\n\nColoque em:\n/sdcard/Download/Freedom/Game Files/Freedom.exe",
-                Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
-
-        Intent intent = new Intent(this, XServerDisplayActivity.class);
-        intent.putExtra("container_id", container.id);
-        intent.putExtra("shortcut_path", gameExe.getAbsolutePath());
-        startActivity(intent);
-        finish();
     }
 
     private File findGameExe(Container container) {
@@ -196,7 +160,6 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
             new File("/sdcard/Download/" + GAME_FOLDER + "/" + GAME_EXE_NAME),
             new File("/storage/emulated/0/Download/" + GAME_FOLDER + "/" + GAME_EXE_NAME),
             new File("/sdcard/Download/Freedom/Game Files/Freedom.exe"),
-            new File("/sdcard/Android/data/com.winlator/Game Files/Freedom.exe"),
             new File(container.getRootDir(), ".wine/drive_c/Freedom.exe"),
         };
 
@@ -285,4 +248,4 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
             .commit();
         currentFragment = fragment;
     }
-}
+            }
